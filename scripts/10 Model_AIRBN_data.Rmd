@@ -1,0 +1,117 @@
+---
+title: "010 Model_AIRBNB"
+author: "Gerard Meester"
+date: "30-3-2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r cars}
+library(tidyverse)
+library(forcats)
+library(recipes)
+library(xgboost)
+library(pROC)
+library(here)
+```
+```{r}
+
+AB_NYC_2019 <- read_csv("//client/G$/I-SZW/O&A/Data Science projecten/2020 XAI met Shapley/data/AB_NYC_2019.csv")
+```
+```{r}
+summary(AB_NYC_2019)
+
+```
+Maak er een classificatie-probleem van
+```{r}
+df <- AB_NYC_2019 %>%
+  mutate(expensive_house = ifelse(price > 150, "Expensive", "Not expensive")) %>% 
+  mutate(expensive_house = as_factor(expensive_house))
+```
+
+Nu pre-processing
+```{r}
+
+average_price_in_neighbourhood_group <-
+  df %>%
+  group_by(neighbourhood_group) %>%
+  dplyr::summarise(number_of_houses_in_neighbourhood_group = n(), average_price_neighbourhood_group = mean(price, na.remove = TRUE))
+
+average_price_in_neighbourhood <-
+  df %>%
+  group_by(neighbourhood) %>%
+  dplyr::summarise(number_of_houses_in_neighbourhood = n(), average_price_neighbourhood = mean(price, na.remove = TRUE))
+
+df <- df %>%
+  left_join(average_price_in_neighbourhood_group, by = "neighbourhood_group") %>%
+  left_join(average_price_in_neighbourhood, by = "neighbourhood")
+
+```
+
+```{r}
+df_num <- df %>%   select_if(is.numeric)
+
+df_fac <- df %>%   select_if(is.factor) 
+
+df <- bind_cols(df_num, df_fac)
+```
+
+```{r}
+df <- select(df, -latitude, -longitude, - price)
+
+features <- select(df, -expensive_house, -id, -host_id)
+
+y <- df$expensive_house
+y_num <- as.numeric(y) - 1
+
+y_object <- tibble(y = y, y_num = y_num)
+```
+
+En nu een model schatten met xgboost
+
+```{r}
+
+param    <- list(objective = "binary:logistic",  # For regression
+                eval_metric = "auc",      # rmse is used for regression
+                max_depth = 4,
+                eta = 0.3,   # Learning rate
+                subsample = 0.8,
+                nrounds = 200,
+                colsample_bytree = 0.8, 
+                min_child_weight = 2, 
+                max_delta_step = 8)
+
+xgb_model <- xgboost(data = as.matrix(features), label = y_num, params = param, nround = param$nrounds, verbose = F)
+                       
+
+```
+
+```{r}
+xgb.plot.importance(xgb.importance(feature_names = NULL, model = xgb_model))
+```
+
+
+```{r}
+xgb.plot.shap(as.matrix(features), 
+                        model = xgb_model,
+                        top_n = 8,
+                        n_col = 2,
+                        ylab = "kans op dure woning")
+               
+```
+```{r}
+predicties <- predict(xgb_model, newdata = as.matrix(features), type = "prob" )
+```
+
+```{r}
+roc <- roc(y_num, predicties)
+plot(roc, col = "blue", left_margin=NULL)
+AUC <- pROC::auc(roc)
+AUC
+
+```
